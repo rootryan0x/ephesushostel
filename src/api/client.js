@@ -1,3 +1,5 @@
+import { getDeviceId, getDeviceName } from '../utils/device';
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 
 function getAuthHeader() {
@@ -11,6 +13,8 @@ async function request(endpoint, options = {}) {
 
   const headers = {
     ...getAuthHeader(),
+    'x-device-id': getDeviceId(),
+    'x-device-name': getDeviceName(),
     ...(!isFormData && { 'Content-Type': 'application/json' }),
     ...(options.headers || {})
   };
@@ -49,10 +53,15 @@ export const api = {
   endSession: () => request('/movement/session/end', { method: 'POST' }),
   getSessionToken: (sessionId) => request(`/movement/session/${sessionId}/token`),
   getSessionLiveStats: (sessionId) => request(`/movement/session/${sessionId}/live-stats`),
-  scanQR: (token) => request('/movement/scan', {
-    method: 'POST',
-    body: JSON.stringify({ token })
-  }),
+  scanQR: (payload) => {
+    const body = typeof payload === 'string'
+      ? { token: payload, device_id: getDeviceId(), device_name: getDeviceName() }
+      : { device_id: getDeviceId(), device_name: getDeviceName(), ...payload };
+    return request('/movement/scan', {
+      method: 'POST',
+      body: JSON.stringify(body)
+    });
+  },
   getMovementHistory: (params = {}) => {
     const query = new URLSearchParams(params).toString();
     return request(`/movement/history${query ? `?${query}` : ''}`);
@@ -173,6 +182,8 @@ export const api = {
   getAuditLogs: () => request('/warden/audit-logs'),
   runOverdueCheck: () => request('/warden/run-overdue-check', { method: 'POST' }),
   getOverdueStudents: () => request('/warden/overdue-students'),
+  resetStudentDevice: (id) => request(`/warden/students/${id}/reset-device`, { method: 'POST' }),
+  getSecurityAlerts: () => request('/warden/security-alerts'),
 
   // Reports
   getReportsSummary: (period) => request(`/reports/summary?period=${period}`),

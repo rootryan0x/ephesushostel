@@ -67,6 +67,18 @@ export function StudentDirectory() {
     }
   };
 
+  const handleResetDevice = async (studentId) => {
+    if (!window.confirm('Reset this student’s phone binding? They will be able to register a new phone on their next scan.')) return;
+    try {
+      await api.resetStudentDevice(studentId);
+      setOverrideFeedback({ type: 'success', text: 'Device binding successfully reset.' });
+      fetchStudents();
+      setSelectedStudent(prev => prev ? { ...prev, registered_device_id: null, registered_device_name: null } : null);
+    } catch (err) {
+      setOverrideFeedback({ type: 'error', text: 'Failed to reset device: ' + err.message });
+    }
+  };
+
   const handleManualOverride = async (e) => {
     e.preventDefault();
     if (!overrideReason) {
@@ -317,6 +329,34 @@ export function StudentDirectory() {
                   <div><strong>Academic Year:</strong> {selectedStudent.year}</div>
                   <div><strong>Student Phone:</strong> {selectedStudent.phone || 'N/A'}</div>
                   <div><strong>Parent Contact:</strong> {selectedStudent.parent_phone}</div>
+                </div>
+
+                <div style={{
+                  marginTop: '0.75rem',
+                  paddingTop: '0.75rem',
+                  borderTop: '1px solid #e2e8f0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: '0.5rem',
+                  fontSize: '0.8rem'
+                }}>
+                  <div>
+                    <strong style={{ color: 'var(--text-secondary)' }}>📱 Registered Hardware Device:</strong>{' '}
+                    <span style={{ fontWeight: 600, color: selectedStudent.registered_device_id ? '#059669' : '#64748b' }}>
+                      {selectedStudent.registered_device_name || selectedStudent.registered_device_id || 'Unbound (Binds on 1st personal scan)'}
+                    </span>
+                  </div>
+                  {selectedStudent.registered_device_id && (
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem', borderColor: '#fca5a5', color: '#b91c1c' }}
+                      onClick={() => handleResetDevice(selectedStudent.id)}
+                    >
+                      Reset Phone Binding
+                    </button>
+                  )}
                 </div>
               </div>
 

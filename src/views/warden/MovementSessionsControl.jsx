@@ -10,7 +10,7 @@ export function MovementSessionsControl() {
   const [activeSession, setActiveSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [startingType, setStartingType] = useState(null);
-  const [tokenInterval, setTokenInterval] = useState(20);
+  const [tokenInterval, setTokenInterval] = useState(3);
   const [errorMsg, setErrorMsg] = useState(null);
 
   const fetchActiveSession = async () => {
@@ -117,10 +117,10 @@ export function MovementSessionsControl() {
             onChange={e => setTokenInterval(parseInt(e.target.value))}
             disabled={!!activeSession}
           >
+            <option value={3}>3 seconds (Ultra-Secure Anti-Proxy • Default)</option>
+            <option value={5}>5 seconds</option>
+            <option value={10}>10 seconds</option>
             <option value={15}>15 seconds</option>
-            <option value={20}>20 seconds (Default)</option>
-            <option value={30}>30 seconds</option>
-            <option value={45}>45 seconds</option>
           </select>
         </div>
       </div>

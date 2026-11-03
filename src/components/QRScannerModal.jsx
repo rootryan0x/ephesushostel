@@ -21,7 +21,11 @@ export function QRScannerModal({ isOpen, onClose, targetMovementType, onSuccess 
   useEffect(() => {
     if (!isOpen) {
       if (scannerRef.current) {
-        scannerRef.current.stop().catch(() => {});
+        try {
+          if (scannerRef.current.isScanning) {
+            scannerRef.current.stop().catch(() => {});
+          }
+        } catch (e) {}
         scannerRef.current = null;
       }
       setCameraActive(false);
@@ -216,6 +220,34 @@ export function QRScannerModal({ isOpen, onClose, targetMovementType, onSuccess 
                     </div>
                     <div style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--primary)', marginTop: '0.25rem' }}>
                       {activeSession.title}
+                    </div>
+                    {/* Device Binding Status Pill */}
+                    <div style={{
+                      marginTop: '0.625rem',
+                      paddingTop: '0.5rem',
+                      borderTop: '1px dashed var(--border-light)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      fontSize: '0.72rem',
+                      color: 'var(--text-secondary)'
+                    }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <span>📱 Device:</span>
+                        <strong style={{ color: 'var(--text-primary)' }}>
+                          {student?.registered_device_name || 'Bound to Current Device'}
+                        </strong>
+                      </span>
+                      <span style={{
+                        background: '#ecfdf5',
+                        color: '#059669',
+                        fontWeight: 700,
+                        padding: '0.1rem 0.45rem',
+                        borderRadius: 9999,
+                        border: '1px solid #a7f3d0'
+                      }}>
+                        🛡️ Anti-Proxy Lock Active
+                      </span>
                     </div>
                   </div>
 

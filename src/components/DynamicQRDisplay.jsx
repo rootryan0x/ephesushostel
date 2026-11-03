@@ -5,7 +5,7 @@ import { QrCode, Pause, Play, Square, Users, CheckCircle2, AlertCircle, RefreshC
 export function DynamicQRDisplay({ session, onSessionUpdated }) {
   const [qrData, setQrData] = useState(null);
   const [liveStats, setLiveStats] = useState(null);
-  const [secondsRemaining, setSecondsRemaining] = useState(20);
+  const [secondsRemaining, setSecondsRemaining] = useState(session?.token_interval_seconds || 3);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('scanned'); // 'scanned' | 'pending' | 'leave'
@@ -14,7 +14,7 @@ export function DynamicQRDisplay({ session, onSessionUpdated }) {
     try {
       const data = await api.getSessionToken(session.id);
       setQrData(data);
-      setSecondsRemaining(data.intervalSeconds || 20);
+      setSecondsRemaining(data.intervalSeconds || 3);
     } catch (err) {
       console.error('Failed to refresh dynamic QR token:', err);
     }
@@ -48,14 +48,14 @@ export function DynamicQRDisplay({ session, onSessionUpdated }) {
       setSecondsRemaining(prev => {
         if (prev <= 1) {
           fetchToken();
-          return 20;
+          return session?.token_interval_seconds || 3;
         }
         return prev - 1;
       });
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [session?.id, session?.status]);
+  }, [session?.id, session?.status, session?.token_interval_seconds]);
 
   const handlePause = async () => {
     setLoading(true);
@@ -206,17 +206,34 @@ export function DynamicQRDisplay({ session, onSessionUpdated }) {
           {/* Rotating Progress Bar */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.5rem' }}>
             <span style={{ fontSize: '0.8rem', color: '#94a3b8', fontFamily: 'var(--font-mono)' }}>
-              Refreshes in {secondsRemaining}s
+              Rotates in {secondsRemaining}s
             </span>
           </div>
           <div className="qr-progress-bar-container">
             <div
               className="qr-progress-bar-fill"
-              style={{ width: `${(secondsRemaining / (qrData?.intervalSeconds || 20)) * 100}%` }}
+              style={{ width: `${(secondsRemaining / (qrData?.intervalSeconds || session?.token_interval_seconds || 3)) * 100}%` }}
             />
           </div>
-          <p style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.5rem', maxWidth: 300 }}>
-            Dynamic token rotates every {qrData?.intervalSeconds || 20}s to prevent unauthorized sharing. One QR serves all students.
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.4rem',
+            background: 'rgba(16, 185, 129, 0.15)',
+            border: '1px solid rgba(16, 185, 129, 0.3)',
+            color: '#a7f3d0',
+            padding: '0.35rem 0.65rem',
+            borderRadius: 9999,
+            fontSize: '0.72rem',
+            fontWeight: 700,
+            marginTop: '0.625rem'
+          }}>
+            <span>🛡️ Anti-Proxy Guard Active</span>
+            <span style={{ opacity: 0.6 }}>•</span>
+            <span>3s Rolling Code</span>
+          </div>
+          <p style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.35rem', maxWidth: 320, textAlign: 'center' }}>
+            Token rotates every {qrData?.intervalSeconds || session?.token_interval_seconds || 3}s. Forwarded photos expire instantly. Hardware locked: 1 device = 1 student.
           </p>
         </div>
 
@@ -286,6 +303,32 @@ export function DynamicQRDisplay({ session, onSessionUpdated }) {
               </div>
             </div>
           </div>
+
+          {/* Real-time Blocked Proxy Attempts Alert Banner */}
+          {liveStats?.blockedProxyCount > 0 && (
+            <div style={{
+              background: 'rgba(239, 68, 68, 0.2)',
+              border: '1px solid rgba(239, 68, 68, 0.4)',
+              borderRadius: 'var(--radius-md)',
+              padding: '0.625rem 0.875rem',
+              marginBottom: '1rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              color: '#fca5a5',
+              fontSize: '0.8rem'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '1.1rem' }}>🚨</span>
+                <span style={{ fontWeight: 700 }}>
+                  {liveStats.blockedProxyCount} Proxy Scan Attempt{liveStats.blockedProxyCount > 1 ? 's' : ''} Blocked & Logged
+                </span>
+              </div>
+              <span style={{ fontSize: '0.7rem', color: '#fecaca', background: 'rgba(0,0,0,0.3)', padding: '0.15rem 0.5rem', borderRadius: 9999 }}>
+                Audit Logged
+              </span>
+            </div>
+          )}
 
           {/* Subtabs: Scanned vs Pending vs On Leave */}
           <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem', marginBottom: '0.75rem' }}>

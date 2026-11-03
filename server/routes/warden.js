@@ -221,4 +221,56 @@ router.get('/overdue-students', authenticate, requireWarden, (req, res) => {
   });
 });
 
+// POST /api/warden/students/:id/reset-device (Warden clears registered phone binding)
+router.post('/students/:id/reset-device', authenticate, requireWarden, (req, res) => {
+  const student = db.prepare(`
+    SELECT s.*, u.full_name, s.room_number
+    FROM students s
+    JOIN users u ON s.user_id = u.id
+    WHERE s.id = ?
+  `).get(req.params.id);
+
+  if (!student) {
+    return res.status(404).json({ error: 'Student profile not found.' });
+  }
+
+  const oldDevice = student.registered_device_name || student.registered_device_id || 'None';
+
+  db.prepare(`
+    UPDATE students
+    SET registered_device_id = NULL, registered_device_name = NULL, device_registered_at = NULL
+    WHERE id = ?
+  `).run(student.id);
+
+  db.prepare(`
+    INSERT INTO audit_logs (performed_by, action, target_type, target_id, original_data, new_data, reason)
+    VALUES (?, 'RESET_DEVICE_BINDING', 'STUDENT', ?, ?, 'Warden verified and unlinked student device binding')
+  `).run(
+    req.user.id,
+    String(student.id),
+    JSON.stringify({ student: student.full_name, room: student.room_number, unlinkedDevice: oldDevice })
+  );
+
+  res.json({
+    success: true,
+    message: `Registered device binding for ${student.full_name} (${student.room_number}) has been reset.`
+  });
+});
+
+// GET /api/warden/security-alerts (Real-time log of blocked proxy scans)
+router.get('/security-alerts', authenticate, requireWarden, (req, res) => {
+  const alerts = db.prepare(`
+    SELECT al.id, al.created_at, al.action, al.reason, al.new_data,
+           u.full_name as student_name, s.room_number
+    FROM audit_logs al
+    LEFT JOIN users u ON al.performed_by = u.id
+    LEFT JOIN students s ON s.user_id = u.id
+    WHERE al.action = 'PROXY_ATTEMPT_BLOCKED'
+    ORDER BY al.created_at DESC
+    LIMIT 30
+  `).all();
+
+  res.json({ alerts });
+});
+
 module.exports = router;

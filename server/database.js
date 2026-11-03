@@ -58,7 +58,7 @@ function initDatabase() {
       title TEXT NOT NULL,
       status TEXT DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'PAUSED', 'COMPLETED')),
       created_by INTEGER REFERENCES users(id),
-      token_interval_seconds INTEGER DEFAULT 20,
+      token_interval_seconds INTEGER DEFAULT 3,
       started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       completed_at DATETIME
     );
@@ -234,6 +234,15 @@ function initDatabase() {
   try { db.exec("ALTER TABLE leave_applications ADD COLUMN student_contact TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE leave_applications ADD COLUMN departure_route TEXT"); } catch (e) {}
   try { db.exec("ALTER TABLE leave_applications ADD COLUMN return_route TEXT"); } catch (e) {}
+
+  // Anti-Proxy & Device Binding Migrations
+  try { db.exec("ALTER TABLE students ADD COLUMN registered_device_id TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE students ADD COLUMN registered_device_name TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE students ADD COLUMN device_registered_at DATETIME"); } catch (e) {}
+  try { db.exec("ALTER TABLE movement_records ADD COLUMN device_id TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE movement_records ADD COLUMN device_name TEXT"); } catch (e) {}
+  try { db.exec("ALTER TABLE movement_records ADD COLUMN is_proxy_blocked INTEGER DEFAULT 0"); } catch (e) {}
+  try { db.exec("ALTER TABLE movement_sessions ADD COLUMN token_interval_seconds INTEGER DEFAULT 3"); } catch (e) {}
 }
 
 initDatabase();

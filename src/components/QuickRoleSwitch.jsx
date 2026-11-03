@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { UserCheck, Shield, GraduationCap, X } from 'lucide-react';
+import { UserCheck, Shield, GraduationCap, X, AlertTriangle, Smartphone } from 'lucide-react';
 import { StatusBadge } from './StatusBadge';
+import { setSimulatedDeviceForUser, toggleProxySimulation, isProxySimulationActive } from '../utils/device';
 
 export function QuickRoleSwitch({ isOpen, onClose }) {
   const { user, switchDemoUser } = useAuth();
@@ -73,13 +74,22 @@ export function QuickRoleSwitch({ isOpen, onClose }) {
     }
   ];
 
+  const [proxyActive, setProxyActive] = useState(isProxySimulationActive());
+
   const handleSelect = async (email) => {
     try {
+      setSimulatedDeviceForUser(email);
       await switchDemoUser(email);
       onClose();
     } catch (err) {
       alert('Failed to switch demo account: ' + err.message);
     }
+  };
+
+  const handleToggleProxyAttack = () => {
+    const nextState = !proxyActive;
+    toggleProxySimulation(nextState);
+    setProxyActive(nextState);
   };
 
   return (
@@ -107,6 +117,37 @@ export function QuickRoleSwitch({ isOpen, onClose }) {
         </div>
 
         <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          {/* Judge Demonstration Control Box */}
+          <div style={{
+            background: proxyActive ? 'rgba(239, 68, 68, 0.1)' : 'rgba(79, 70, 229, 0.08)',
+            border: proxyActive ? '1px solid #f87171' : '1px solid #c7d2fe',
+            borderRadius: 'var(--radius-md)',
+            padding: '0.875rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '0.75rem'
+          }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 800, fontSize: '0.85rem', color: proxyActive ? '#b91c1c' : '#4338ca' }}>
+                <Smartphone size={16} />
+                <span>Judge Demo Mode: {proxyActive ? '⚠️ Proxy Attack Mode Active' : '🛡️ Individual Device Protection'}</span>
+              </div>
+              <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', margin: '0.2rem 0 0' }}>
+                {proxyActive
+                  ? 'Simulating a student logging in on a friend’s phone to scan proxy attendance. Next scan will trigger instant anti-proxy rejection!'
+                  : 'Each student is bound to their personal phone. Toggle this to demonstrate proxy prevention to judges.'}
+              </p>
+            </div>
+            <button
+              className={`btn btn-sm ${proxyActive ? 'btn-danger' : 'btn-secondary'}`}
+              onClick={handleToggleProxyAttack}
+              style={{ whiteSpace: 'nowrap', fontSize: '0.75rem', padding: '0.35rem 0.65rem' }}
+            >
+              {proxyActive ? 'Disable Attack Sim' : 'Simulate Proxy Scan'}
+            </button>
+          </div>
+
           {demoAccounts.map((grp, idx) => (
             <div key={idx}>
               <div style={{

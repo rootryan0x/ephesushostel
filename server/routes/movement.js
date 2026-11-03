@@ -49,7 +49,7 @@ router.get('/active-session', authenticate, (req, res) => {
 
 // POST /api/movement/session/start (Warden starts a new session)
 router.post('/session/start', authenticate, requireWarden, async (req, res) => {
-  const { movement_type, title, token_interval_seconds = 20 } = req.body;
+  const { movement_type, title, token_interval_seconds = 3 } = req.body;
 
   if (!movement_type || !MOVEMENT_LABELS[movement_type]) {
     return res.status(400).json({ error: 'Valid movement type is required.' });
@@ -134,6 +134,7 @@ router.get('/session/:id/token', authenticate, async (req, res) => {
   }
 
   const now = Date.now();
+  const interval = session.token_interval_seconds || 3;
   const tokenPayload = {
     sessionId: session.id,
     movementType: session.movement_type,
@@ -142,8 +143,8 @@ router.get('/session/:id/token', authenticate, async (req, res) => {
     nonce: uuidv4()
   };
 
-  // Short lived token
-  const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '60s' });
+  // Ultra-short lived token (15s max life, rotates every 3s)
+  const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '15s' });
 
   // Generate QR code data URL
   const qrDataUrl = await QRCode.toDataURL(token, {
@@ -159,9 +160,9 @@ router.get('/session/:id/token', authenticate, async (req, res) => {
   res.json({
     token,
     qrDataUrl,
-    intervalSeconds: session.token_interval_seconds || 20,
+    intervalSeconds: interval,
     generatedAt: now,
-    expiresAt: now + ((session.token_interval_seconds || 20) * 1000)
+    expiresAt: now + (interval * 1000)
   });
 });
 
@@ -206,6 +207,13 @@ router.get('/session/:id/live-stats', authenticate, (req, res) => {
     ORDER BY s.room_number ASC
   `).all().filter(s => !completedStudentIds.has(s.student_id));
 
+  // Blocked proxy attempts during this session
+  const blockedProxyCount = db.prepare(`
+    SELECT COUNT(*) as count FROM audit_logs
+    WHERE action = 'PROXY_ATTEMPT_BLOCKED'
+      AND created_at >= (SELECT started_at FROM movement_sessions WHERE id = ?)
+  `).get(session.id)?.count || 0;
+
   res.json({
     sessionId: session.id,
     movementType: session.movement_type,
@@ -215,39 +223,44 @@ router.get('/session/:id/live-stats', authenticate, (req, res) => {
     completedCount: completedRecords.length,
     pendingCount: pendingStudents.length,
     onLeaveCount: onLeaveStudents.length,
+    blockedProxyCount,
     completed: completedRecords,
     pending: pendingStudents,
     onLeave: onLeaveStudents
   });
 });
 
-// POST /api/movement/scan (Student submits QR scan)
+// POST /api/movement/scan (Student submits QR scan with device binding & anti-proxy guard)
 router.post('/scan', authenticate, requireStudent, (req, res) => {
-  const { token } = req.body;
+  const { token, device_id, device_name } = req.body;
   const student = req.student;
 
   if (!token) {
     return res.status(400).json({ error: 'No QR code payload received.' });
   }
 
-  // 1. Verify JWT signature
+  // 1. Resolve client hardware device identifier
+  const deviceId = (device_id || req.headers['x-device-id'] || '').trim();
+  const deviceName = (device_name || req.headers['x-device-name'] || 'Mobile Browser').trim();
+
+  // 2. Verify JWT signature
   let decoded;
   try {
     decoded = jwt.verify(token, JWT_SECRET);
   } catch (err) {
     return res.status(400).json({
-      error: 'Invalid or expired QR code. Please scan the currently active code displayed by the warden.'
+      error: 'Invalid or expired QR code. Please scan the currently active code displayed on the warden screen.'
     });
   }
 
-  // 2. Validate Ephesus Hostel origin
+  // 3. Validate Ephesus Hostel origin
   if (decoded.hostel !== 'EPHESUS') {
     return res.status(400).json({
       error: 'This QR code does not belong to Ephesus Hostel, Providence College of Engineering.'
     });
   }
 
-  // 3. Verify session exists and is ACTIVE
+  // 4. Verify session exists and is ACTIVE
   const session = db.prepare('SELECT * FROM movement_sessions WHERE id = ?').get(decoded.sessionId);
   if (!session) {
     return res.status(400).json({ error: 'Movement session does not exist or has closed.' });
@@ -259,16 +272,108 @@ router.post('/scan', authenticate, requireStudent, (req, res) => {
     });
   }
 
-  // 4. Verify token freshness (interval + 15 seconds grace period for network delays)
+  // 5. Verify token freshness (Ultra-strict 3s rolling window + 3s network latency allowance)
   const tokenAgeMs = Date.now() - decoded.timestamp;
-  const maxAllowedAgeMs = ((session.token_interval_seconds || 20) + 15) * 1000;
+  const intervalSec = session.token_interval_seconds || 3;
+  const maxAllowedAgeMs = (intervalSec + 3) * 1000;
   if (tokenAgeMs > maxAllowedAgeMs) {
     return res.status(400).json({
-      error: 'This QR code has expired. Please scan the newly refreshed QR code on the display.'
+      error: `This dynamic QR code has expired (${intervalSec}s rolling token). Taking photos or forwarding QR codes is strictly prevented. Please scan the live display.`
     });
   }
 
-  // 5. Prevent double scans in the same session
+  // 6. ANTI-PROXY GUARD #1: Physical Device Session Lockout (Preventing 1 phone from scanning for multiple students)
+  if (deviceId) {
+    const existingDeviceScan = db.prepare(`
+      SELECT mr.*, u.full_name as previous_student_name, s.room_number as previous_room
+      FROM movement_records mr
+      JOIN students s ON mr.student_id = s.id
+      JOIN users u ON s.user_id = u.id
+      WHERE mr.session_id = ? AND mr.device_id = ?
+    `).get(session.id, deviceId);
+
+    if (existingDeviceScan) {
+      // Log blocked proxy attempt in audit logs
+      db.prepare(`
+        INSERT INTO audit_logs (performed_by, action, target_type, target_id, new_data, reason)
+        VALUES (?, 'PROXY_ATTEMPT_BLOCKED', 'STUDENT', ?, ?, 'Multiple student scan attempt from identical physical device')
+      `).run(
+        req.user.id,
+        String(student.id),
+        JSON.stringify({
+          attemptedBy: req.user.full_name,
+          previousStudent: existingDeviceScan.previous_student_name,
+          deviceId,
+          deviceName,
+          sessionId: session.id
+        })
+      );
+
+      return res.status(409).json({
+        error: `🚨 PROXY ATTENDANCE BLOCKED: This physical device has already registered attendance for ${existingDeviceScan.previous_student_name} (${existingDeviceScan.previous_room}) in this session. Each student must scan individually from their own personal device.`
+      });
+    }
+
+    // 7. ANTI-PROXY GUARD #2: Strict 1-to-1 Device-to-Student Registration Binding
+    // A) Check if this physical device is registered to a DIFFERENT student
+    const deviceBoundOther = db.prepare(`
+      SELECT s.*, u.full_name, s.room_number
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      WHERE s.registered_device_id = ? AND s.id != ?
+    `).get(deviceId, student.id);
+
+    if (deviceBoundOther) {
+      db.prepare(`
+        INSERT INTO audit_logs (performed_by, action, target_type, target_id, new_data, reason)
+        VALUES (?, 'PROXY_ATTEMPT_BLOCKED', 'STUDENT', ?, ?, 'Cross-student device sharing detected')
+      `).run(
+        req.user.id,
+        String(student.id),
+        JSON.stringify({
+          attemptedStudent: req.user.full_name,
+          boundStudent: deviceBoundOther.full_name,
+          boundRoom: deviceBoundOther.room_number,
+          deviceId
+        })
+      );
+
+      return res.status(403).json({
+        error: `🚨 PROXY SCAN DETECTED: This physical device is registered to ${deviceBoundOther.full_name} (${deviceBoundOther.room_number}). Login sharing to scan attendance on a peer's phone is strictly prohibited.`
+      });
+    }
+
+    // B) Check if this student's account is already bound to a DIFFERENT physical device
+    if (student.registered_device_id && student.registered_device_id !== deviceId) {
+      db.prepare(`
+        INSERT INTO audit_logs (performed_by, action, target_type, target_id, new_data, reason)
+        VALUES (?, 'PROXY_ATTEMPT_BLOCKED', 'STUDENT', ?, ?, 'Student attempted scan from unregistered secondary device')
+      `).run(
+        req.user.id,
+        String(student.id),
+        JSON.stringify({
+          student: req.user.full_name,
+          registeredDevice: student.registered_device_name || student.registered_device_id,
+          attemptedDevice: deviceName
+        })
+      );
+
+      return res.status(403).json({
+        error: `🚨 UNREGISTERED DEVICE: Your account is permanently bound to "${student.registered_device_name || 'your primary device'}". If you have changed your phone, please contact the Chief Warden to reset your registered device.`
+      });
+    }
+
+    // C) First-time scan: Permanently bind this device to the student profile
+    if (!student.registered_device_id) {
+      db.prepare(`
+        UPDATE students
+        SET registered_device_id = ?, registered_device_name = ?, device_registered_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(deviceId, deviceName, student.id);
+    }
+  }
+
+  // 8. Prevent duplicate student scans in the same session
   const existingRecord = db.prepare(`
     SELECT * FROM movement_records
     WHERE session_id = ? AND student_id = ?
@@ -406,12 +511,12 @@ router.post('/scan', authenticate, requireStudent, (req, res) => {
 
   // Execute database transaction
   const recordMovementTx = db.transaction(() => {
-    // 1. Insert movement record
+    // 1. Insert movement record with physical device audit
     db.prepare(`
       INSERT INTO movement_records (
         student_id, movement_type, direction, timestamp,
-        session_id, qr_token, related_leave_id, related_outpass_id, source
-      ) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, 'QR_SCAN')
+        session_id, qr_token, related_leave_id, related_outpass_id, source, device_id, device_name
+      ) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, 'QR_SCAN', ?, ?)
     `).run(
       student.id,
       movementType,
@@ -419,7 +524,9 @@ router.post('/scan', authenticate, requireStudent, (req, res) => {
       session.id,
       token.slice(-16), // store short hash/suffix for audit
       relatedLeaveId,
-      relatedOutpassId
+      relatedOutpassId,
+      deviceId || null,
+      deviceName || null
     );
 
     // 2. Update student status
